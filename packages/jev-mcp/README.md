@@ -1,7 +1,8 @@
-# jev-mcp
+# @dsh-jev/mcp
 
 MCP server (stdio) exposing the jev System One primitives (`choice` / `score`
-/ `noul`) from `@dsh-jev/core` as MCP tools. Every tool degrades gracefully:
+/ `noul`) from `@dsh-jev/core` as MCP tools. Published as
+`@dsh-jev/mcp` (bin: `dsh-jev-mcp`). Every tool degrades gracefully:
 when the jev API is unreachable, timed out, or malformed, the tool still
 returns the caller-supplied fallback and clearly marks `jev: degraded (reason)`.
 

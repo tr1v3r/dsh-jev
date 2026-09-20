@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * jev-mcp — MCP stdio server wrapping @dsh-jev/core.
+ * @dsh-jev/mcp — MCP stdio server wrapping @dsh-jev/core.
  *
  * Tools (all degrade, never error the tool call, when System One is unreachable):
  *   - jev_choice: pick one of N options
