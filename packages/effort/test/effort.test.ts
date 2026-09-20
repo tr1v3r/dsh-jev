@@ -1,28 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { apply, canLowerEffort, decideEffort, latestUserText } from '../lib/index.js';
 
-function mockJevFetch(picked) {
-  return async (_url, init) => {
+function mockJevFetch(picked: string) {
+  return async (_url: string, init?: RequestInit): Promise<Response> => {
     if (picked === 'DEGRADE') return new Response('nope', { status: 500 });
     return Response.json({ answer: { pickedIndex: picked === 'lower' ? 1 : 0, picked } });
   };
 }
 
 function makeHarness() {
-  const listeners = new Map();
+  const listeners = new Map<string, (...args: any[]) => any>();
   return {
     listeners,
-    ctx: { on: (event, listener) => listeners.set(event, listener) },
+    ctx: { on: (event: string, listener: (...args: any[]) => any) => listeners.set(event, listener) },
   };
 }
 
-async function runRequest(h, { turn = 1, resolved, config = {} } = {}) {
+type ResolvedConfig = { provider: string; model: string; reasoningEffort?: string };
+
+async function runRequest(
+  h: ReturnType<typeof makeHarness>,
+  opts: { turn?: number; resolved?: ResolvedConfig; config?: Record<string, unknown> } = {},
+) {
+  const { turn = 1, resolved } = opts;
   const agent = {};
-  await h.listeners.get('agent/pre-step')(
+  await h.listeners.get('agent/pre-step')!(
     { agent, turn, step: 1, messages: [{ content: [{ type: 'text', text: 'hi' }] }], signal: new AbortController().signal },
     async () => ({ kind: 'enter', messages: [] })
   );
-  return h.listeners.get('agent/request')(
+  return h.listeners.get('agent/request')!(
     { agent, turn, step: 1, signal: new AbortController().signal },
     async () => resolved
   );
@@ -44,7 +50,7 @@ describe('canLowerEffort', () => {
 });
 
 describe('decideEffort', () => {
-  const ok = (picked) => ({ ok: true, value: { pickedIndex: picked === 'lower' ? 1 : 0, picked } });
+  const ok = (picked: string) => ({ ok: true, value: { pickedIndex: picked === 'lower' ? 1 : 0, picked } });
   const degraded = { ok: false, value: { pickedIndex: 0, picked: 'keep' }, error: 'HTTP 500' };
 
   it('lowers on a "lower" pick', () => {

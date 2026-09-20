@@ -92,6 +92,10 @@ router README 的示例需要改（`path:` → `name:`）。
 
 工作区合计 35/35。
 
+> 更新（t2，2026-09-21）：jev-mcp 补齐 11 例（InMemoryTransport+Client）、
+> effort 补齐浏览器端 13 例 DOM 测试（11→24），工作区合计 **59/59**
+> （`pnpm -r test` 全绿）；jev-mcp 拆出 `buildServer(client)` 工厂（bin 行为不变）。
+
 ## 正式接入步骤（对用户真实 profile）
 
 1. 把 overlay 里的 `- insert:` 三段并入 `~/.config/dsh/profiles/web/cordis.patch.yml`

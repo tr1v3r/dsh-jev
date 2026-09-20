@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Explicit official registry (global ~/.npmrc may point to an internal mirror;
+# the project .npmrc already pins this, and this env var makes it explicit in CI).
+env:
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+
+jobs:
+  ci:
+    name: node-${{ matrix.node-version }} (ubuntu-latest)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        # Version is read from the packageManager field in package.json.
+
+      - name: Show effective npm registry
+        run: pnpm config get registry
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      - name: Build
+        run: pnpm -r run build
+
+      - name: Test
+        run: pnpm -r run test
+
+      - name: Upload coverage summary
+        if: matrix.node-version == 22
+        run: |
+          echo "## Vitest coverage summary" >> "$GITHUB_STEP_SUMMARY"
+          find packages -name 'coverage-summary.json' -print -exec cat '{}' \; >> "$GITHUB_STEP_SUMMARY" || true

@@ -33,14 +33,30 @@ must not hold the jev API key.
 
 ## Install into the Web profile
 
+Published as `@dsh-jev/effort` (npm):
+
 ```sh
-dsh plugin --profile web add dsh-jev-effort  # once published
+dsh plugin --profile web add @dsh-jev/effort
 ```
 
-or via the bundle patch in `cordis.patch.yml` (`- insert: - id: jev-effort`).
+or via the profile's `cordis.patch.yml` (new instances need `- insert:`):
+
+```yaml
+- insert:
+    - id: jev-effort
+      name: '@dsh-jev/effort'
+      config:
+        enabled: true          # default
+        targetEffort: low      # default
+```
+
+`JEV_API_KEY` is read from the process environment via `@dsh-jev/core`; in
+GUI/launchd contexts pass it via the profile patch (`env:`) rather than a
+shell export. Web-only: the browser face (composer hint) is registered under
+`platform: web`; installing it into the TUI profile does nothing visible.
 
 ## Development
 
 ```sh
-pnpm --filter @dsh-jev/effort test   # syntax checks + 11 vitest cases
+pnpm --filter @dsh-jev/effort test   # syntax checks + 24 vitest cases (host + browser DOM)
 ```

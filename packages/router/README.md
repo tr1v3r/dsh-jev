@@ -26,8 +26,22 @@ turn's complexity:
 
 ## Install into a dsh profile
 
+From the published package (recommended):
+
 ```yaml
 # <profile>/cordis.patch.yml
+- insert:
+    - id: dsh-jev-router
+      name: '@dsh-jev/router'   # npm-installed plugin
+      config:
+        mode: shadow # shadow | enforce
+        heavy: { provider: deepseek-official, model: deepseek-flash }
+        light: { provider: zai-coding-cn, model: glm-5.3-flash }
+```
+
+From a local checkout (development):
+
+```yaml
 - insert:
     - id: dsh-jev-router
       # local files go under `name:` (dsh converts fs paths to file:// URLs);
@@ -35,12 +49,11 @@ turn's complexity:
       name: /Users/you/workspace/opensource/dsh-jev/packages/router/dist/index.js
       config:
         mode: shadow # shadow | enforce
-        heavy: { provider: deepseek-official, model: deepseek-flash }
-        light: { provider: zai-coding-cn, model: glm-5.3-flash }
 ```
 
-All config keys are optional; `JEV_API_KEY` / `JEV_ENDPOINT` env vars are
-honored via `@dsh-jev/core`.
+All config keys are optional (`mode` defaults to `shadow`). `JEV_API_KEY` is
+read from the environment via `@dsh-jev/core`; endpoint/timeout/API key can
+also be given explicitly as `endpoint` / `timeoutMs` / `apiKey` config keys.
 
 ## Development
 
