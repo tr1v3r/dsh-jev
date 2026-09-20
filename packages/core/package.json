@@ -1,6 +1,6 @@
 {
   "name": "@dsh-jev/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "jev System One client: choice/score/noul primitives, timeout + degrade semantics, never throws",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-jev/router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh cordis plugin: per-turn jev System One complexity routing between already-registered LLM routes (shadow-run by default)",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-jev/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server exposing jev System One choice/score/noul tools to dsh (DeepSeek Harness)",
   "type": "module",
   "bin": {
