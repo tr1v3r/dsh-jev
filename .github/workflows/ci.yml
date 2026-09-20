@@ -37,11 +37,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm -r run typecheck
-
+      # Build must precede typecheck: dependent packages resolve @dsh-jev/core
+      # types from its emitted dist/index.d.ts (topological order: core first).
       - name: Build
         run: pnpm -r run build
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
 
       - name: Test
         run: pnpm -r run test
