@@ -1,4 +1,4 @@
-# @dsh-jev/mcp
+# jev-mcp
 
 MCP server (stdio) exposing the jev System One primitives (`choice` / `score`
 / `noul`) from `@dsh-jev/core` as MCP tools. Every tool degrades gracefully:
