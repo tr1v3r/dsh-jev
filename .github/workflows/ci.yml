@@ -17,7 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24]
+        # pnpm 11 uses node:sqlite (added in node 22.5), so node 20 is not testable
+        node-version: [22, 24]
 
     steps:
       - uses: actions/checkout@v4
