@@ -1,0 +1,11 @@
+# dsh-jev-effort Web bundle patch.
+# The host row carries the effort-lowering request waterfall; the browser
+# client entry (mounted via dsh.client) renders the composer hint.
+
+- insert:
+    - id: jev-effort
+      name: dsh-jev-effort
+      config:
+        enabled: true
+        # targetEffort: low
+        # endpoint / apiKey / timeoutMs are honored via @dsh-jev/core env defaults
