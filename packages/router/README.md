@@ -30,7 +30,9 @@ turn's complexity:
 # <profile>/cordis.patch.yml
 - insert:
     - id: dsh-jev-router
-      path: /Users/you/workspace/opensource/dsh-jev/packages/router/dist/index.js
+      # local files go under `name:` (dsh converts fs paths to file:// URLs);
+      # a `path:` field is silently ignored and the import crashes
+      name: /Users/you/workspace/opensource/dsh-jev/packages/router/dist/index.js
       config:
         mode: shadow # shadow | enforce
         heavy: { provider: deepseek-official, model: deepseek-flash }
