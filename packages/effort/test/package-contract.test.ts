@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(
   readFileSync(resolve(packageDir, 'package.json'), 'utf8'),
-) as { name: string };
+) as { name: string; version: string };
 
 describe('published package identity', () => {
   it('uses the manifest name in both host and browser bundle entries', () => {
@@ -15,5 +15,6 @@ describe('published package identity', () => {
 
     expect(hostBundle).toContain(`name: '${manifest.name}'`);
     expect(browserBundle).toContain(`id: "${manifest.name}"`);
+    expect(browserBundle).toContain(`const CLIENT_VERSION = "${manifest.version}";`);
   });
 });

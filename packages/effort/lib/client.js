@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
 	factory: () => {
 		const exports = {};
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-		const CLIENT_VERSION = "0.1.0";
+		const CLIENT_VERSION = "0.1.2"; // injected from package.json by the build script
 		const HINT_ID = "dsh-jev-effort-hint";
 		const OWNERSHIP_ATTR = "data-dsh-jev-effort-version";
 		const DISMISS_KEY = "dsh-jev-effort.hint.dismissed";
@@ -74,16 +74,20 @@ window.__ModuleLoader__.load({
 		 * the live element's stamped version may remove it — a stale hot-swapped
 		 * listener cannot tear down the new UI.
 		 */
-		const renderHint = () => {
-			if (isDismissed())
-				return;
+		const renderHint = (onDone = () => {}) => {
+			if (isDismissed()) {
+				onDone();
+				return true;
+			}
 			const container = findComposerContainer();
 			if (container === null)
-				return;
+				return false;
 			styleOnce();
 			const existing = document.getElementById(HINT_ID);
-			if (existing?.getAttribute(OWNERSHIP_ATTR) === CLIENT_VERSION)
-				return;
+			if (existing?.getAttribute(OWNERSHIP_ATTR) === CLIENT_VERSION) {
+				onDone();
+				return true;
+			}
 			existing?.remove();
 			const bar = document.createElement("div");
 			bar.id = HINT_ID;
@@ -99,9 +103,12 @@ window.__ModuleLoader__.load({
 				} catch {}
 				if (bar.getAttribute(OWNERSHIP_ATTR) === CLIENT_VERSION)
 					bar.remove();
+				onDone();
 			});
 			bar.append(text, dismiss);
 			container.parentElement?.insertBefore(bar, container);
+			onDone();
+			return true;
 		};
 		const STATE = Symbol.for("dsh-jev-effort.state");
 		function apply(ctx) {
@@ -112,8 +119,17 @@ window.__ModuleLoader__.load({
 				previous.dispose();
 			let unregisterLocale = null;
 			let observer = null;
+			let renderFrame = null;
 			let disposed = false;
 			let state;
+			const stopWatching = () => {
+				observer?.disconnect();
+				observer = null;
+				if (renderFrame !== null) {
+					cancelAnimationFrame(renderFrame);
+					renderFrame = null;
+				}
+			};
 			try {
 				const locale = typeof ctx?.get === "function" ? ctx.get("locale") : null;
 				if (typeof locale?.register === "function" && typeof locale?.bind === "function") {
@@ -125,17 +141,25 @@ window.__ModuleLoader__.load({
 			} catch {
 				currentT = fallbackT;
 			}
-			renderHint();
-			// The composer mounts asynchronously; watch for it and late layouts.
-			try {
-				observer = new MutationObserver(() => renderHint());
+			const mounted = renderHint(stopWatching);
+			// The composer mounts asynchronously; coalesce mutation bursts into one scan.
+			if (!mounted) try {
+				observer = new MutationObserver(() => {
+					if (renderFrame !== null)
+						return;
+					renderFrame = requestAnimationFrame(() => {
+						renderFrame = null;
+						if (!disposed)
+							renderHint(stopWatching);
+					});
+				});
 				observer.observe(document.body, { childList: true, subtree: true });
 			} catch {}
 			const cleanup = () => {
 				if (disposed)
 					return;
 				disposed = true;
-				observer?.disconnect();
+				stopWatching();
 				if (typeof unregisterLocale === "function")
 					unregisterLocale();
 				currentT = fallbackT;
