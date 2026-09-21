@@ -81,6 +81,17 @@ describe('jev_choice', () => {
     expect(payloadAfter(text)).toEqual({ pickedIndex: 1, picked: 'b' });
   });
 
+  it('rejects fallbackPick when it is not one of options', async () => {
+    const { client, calls } = await start(vi.fn().mockResolvedValue(ok({ pickedIndex: 0 })));
+    const res = await client.callTool({
+      name: 'jev_choice',
+      arguments: { question: 'q', options: ['a', 'b'], fallbackPick: 'missing' },
+    });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(res as never)).toContain('fallbackPick must match one of options');
+    expect(calls).toHaveLength(0);
+  });
+
   it('degrades on malformed response payloads', async () => {
     const { client } = await start(vi.fn().mockResolvedValue(new Response('<html>not json</html>', { status: 200 })));
     const res = await client.callTool({ name: 'jev_choice', arguments: { question: 'q', options: ['a'] } });
