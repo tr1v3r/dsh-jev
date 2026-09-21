@@ -6,9 +6,10 @@ reasoning effort to `low` for simple turns, with a dismissible composer hint.
 Modeled on the mature `dsh-quote-followup` plugin pattern:
 
 - **Two halves.** The host face (`lib/index.js`) hooks the `agent/request`
-  waterfall: before a turn's first request it asks jev `choice(keep|lower)`
-  with the newest user text as context; a "lower" pick rewrites
-  `reasoningEffort` to `low` (configurable via `targetEffort`). The browser
+  waterfall: once per agent turn it asks jev `choice(keep|lower)` with the newest
+  user text as context; later steps and retries reuse that decision. A "lower"
+  pick rewrites `reasoningEffort` only when `targetEffort` is supported and lower
+  in the exact model's capability ordering. The browser
   face (`lib/client.js`, mounted via the package's `dsh.client`
   `platform: web` declaration) renders a lightweight, dismissible hint above
   the composer explaining the behavior.

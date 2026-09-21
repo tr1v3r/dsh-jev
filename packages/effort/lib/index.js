@@ -1,34 +1,27 @@
 /**
  * dsh-jev-effort — host face.
  *
- * Web-only feature (the bundle patch is only inserted into the Web profile),
- * but this host entry is the half that can actually see the request: on the
- * `agent/request` waterfall it asks jev System One whether the current turn
- * is simple enough to lower `reasoningEffort` to `low`. It NEVER touches
- * provider/model — route selection belongs elsewhere (dsh-jev-router does
- * that job deliberately, with its own gates) — and on any jev failure it
- * silently returns the resolved config unchanged (original effort kept).
- *
- * The browser half (lib/client.js) renders the dismissible composer hint.
+ * Once per agent turn, asks jev whether the exact resolved model should use a
+ * lower supported reasoning effort. Provider/model are never changed, and any
+ * jev or capability lookup failure keeps the resolved config unchanged.
  */
 
 import { createJevClient } from '@dsh-jev/core';
 
-/** Rank: lower number = more effort. Unknown efforts never get lowered. */
-export const EFFORT_RANK = { max: 0, high: 1, medium: 2, low: 3 };
-
-export function canLowerEffort(current, target = 'low') {
-  const a = EFFORT_RANK[current];
-  const b = EFFORT_RANK[target];
-  if (a === undefined || b === undefined) return false;
-  return b > a;
+/** Effort IDs are opaque and ordered only by the exact model's metadata. */
+export function canLowerEffort(current, target, supportedEfforts = []) {
+  const ids = supportedEfforts.map((effort) => typeof effort === 'string' ? effort : effort?.id);
+  const currentIndex = ids.indexOf(current);
+  const targetIndex = ids.indexOf(target);
+  return currentIndex >= 0 && targetIndex >= 0 && targetIndex < currentIndex;
 }
 
 /** Pure decision used by the request listener (unit-tested directly). */
 export function decideEffort(
   outcome /* JevOutcome<ChoiceAnswer> */,
   resolved /* frozen LlmCallConfig */,
-  target = 'low'
+  target,
+  supportedEfforts = []
 ) {
   if (!outcome.ok) {
     return { effort: resolved.reasoningEffort, lowered: false, reason: `jev degraded (${outcome.error ?? 'unknown'}) — keeping effort` };
@@ -36,14 +29,14 @@ export function decideEffort(
   if (outcome.value.picked !== 'lower') {
     return { effort: resolved.reasoningEffort, lowered: false, reason: 'jev says keep' };
   }
-  if (!canLowerEffort(resolved.reasoningEffort, target)) {
-    return { effort: resolved.reasoningEffort, lowered: false, reason: `effort ${String(resolved.reasoningEffort)} not lowerable to ${target}` };
+  if (!canLowerEffort(resolved.reasoningEffort, target, supportedEfforts)) {
+    return { effort: resolved.reasoningEffort, lowered: false, reason: `effort ${String(resolved.reasoningEffort)} not lowerable to ${target} for this model` };
   }
   return { effort: target, lowered: true, reason: 'ok' };
 }
 
 export const name = 'jev-effort';
-export const inject = [];
+export const inject = ['llm'];
 
 export function apply(ctx, config = {}) {
   const enabled = config.enabled !== false;
@@ -56,8 +49,51 @@ export function apply(ctx, config = {}) {
     ...(config.fetchImpl !== undefined ? { fetchImpl: config.fetchImpl } : {}),
   });
 
-  /** Newest user text per agent per turn, captured at pre-step. */
   const turnText = new WeakMap();
+  const decisions = new WeakMap();
+  const MAX_TURNS = 32;
+  const TURN_TTL_MS = 60_000;
+
+  const prune = (agent, now = Date.now()) => {
+    const perTurn = decisions.get(agent);
+    if (!perTurn) return;
+    for (const [turn, entry] of perTurn) {
+      if (entry.expiresAt <= now) {
+        perTurn.delete(turn);
+        turnText.get(agent)?.delete(turn);
+      }
+    }
+    while (perTurn.size > MAX_TURNS) {
+      const oldest = perTurn.keys().next().value;
+      if (oldest === undefined) break;
+      perTurn.delete(oldest);
+      turnText.get(agent)?.delete(oldest);
+    }
+  };
+
+  const evaluate = (payload) => {
+    const perTurn = decisions.get(payload.agent) ?? new Map();
+    decisions.set(payload.agent, perTurn);
+    prune(payload.agent);
+    const existing = perTurn.get(payload.turn);
+    if (existing) return existing.promise;
+    const text = turnText.get(payload.agent)?.get(payload.turn) ?? '';
+    const promise = jev.choice(
+      {
+        question:
+          'Should this assistant turn run with reduced reasoning effort? ' +
+          'Answer "lower" only for simple turns (short factual Q&A, formatting, chit-chat) ' +
+          'where deep reasoning adds latency without value. Otherwise answer "keep".',
+        options: ['keep', 'lower'],
+        context: text ? { userTurn: text } : {},
+        signal: payload.signal,
+      },
+      { pickedIndex: 0, picked: 'keep' }
+    );
+    perTurn.set(payload.turn, { promise, expiresAt: Date.now() + TURN_TTL_MS });
+    prune(payload.agent);
+    return promise;
+  };
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next();
@@ -71,23 +107,18 @@ export function apply(ctx, config = {}) {
     const resolved = await next();
     if (!enabled) return resolved;
     let outcome;
+    let model;
     try {
-      const text = turnText.get(payload.agent)?.get(payload.turn) ?? '';
-      outcome = await jev.choice(
-        {
-          question:
-            'Should this assistant turn run with reduced reasoning effort? ' +
-            'Answer "lower" only for simple turns (short factual Q&A, formatting, chit-chat) ' +
-            'where deep reasoning adds latency without value. Otherwise answer "keep".',
-          options: ['keep', 'lower'],
-          context: text ? { userTurn: text } : {},
-        },
-        { pickedIndex: 0, picked: 'keep' } // degraded outcomes keep the original effort
-      );
+      [outcome, model] = await Promise.all([
+        evaluate(payload),
+        ctx.llm.resolveModelInfo(resolved.provider, resolved.model, payload.signal),
+      ]);
     } catch {
-      return resolved; // defensive: JevClient never throws, but never break a request
+      return resolved;
     }
-    const { effort, lowered, reason } = decideEffort(outcome, resolved, target);
+    if (model.provider !== resolved.provider || model.id !== resolved.model) return resolved;
+    const supported = model.reasoning?.efforts ?? [];
+    const { effort, lowered, reason } = decideEffort(outcome, resolved, target, supported);
     if (lowered) {
       log(`[dsh-jev-effort] turn=${payload.turn} step=${payload.step} ${String(resolved.reasoningEffort)} → ${effort} (jev)`);
       return { ...resolved, reasoningEffort: effort };
