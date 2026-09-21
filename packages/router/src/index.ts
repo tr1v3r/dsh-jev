@@ -166,7 +166,10 @@ export async function selectRoute(
     return { route: heavy, keepDefault: true, reason: `jev degraded (${outcome.error ?? 'unknown'}) — keeping default route` };
   }
   const picked = outcome.value.picked;
-  const route = picked === 'light' ? light : picked === 'heavy' ? heavy : heavy;
+  if (picked !== 'light' && picked !== 'heavy') {
+    return { route: heavy, keepDefault: true, reason: `unexpected pick ${JSON.stringify(picked)} — keeping default route` };
+  }
+  const route = picked === 'light' ? light : heavy;
   if (sameRoute(route, resolved)) {
     return { route, keepDefault: true, reason: `already on ${route.provider}/${route.model}` };
   }

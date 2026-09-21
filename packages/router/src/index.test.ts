@@ -108,6 +108,17 @@ describe('selectRoute', () => {
     expect(r.reason).toContain('degraded');
   });
 
+  it('unexpected picked value keeps the default route instead of falling through to heavy', async () => {
+    // resolved is the LIGHT route: before the fix, an unexpected pick silently
+    // enforced a switch to heavy (keepDefault: false) — the #8 failure mode.
+    const lightResolved = { provider: 'zai-coding-cn', model: 'glm-5.3-flash' };
+    const r = await selectRoute(okOutcome('turbo'), lightResolved as any, {}, llm);
+    expect(r.keepDefault).toBe(true);
+    expect(r.reason).toContain('unexpected pick');
+    // `route` is an inert placeholder when keepDefault — apply() returns the
+    // resolved config without reading it — so it is deliberately not asserted.
+  });
+
   it('missing target model keeps the default route', async () => {
     const missing = { listProviders: () => [], resolveModelInfo: async () => { throw new Error('missing'); } };
     const r = await selectRoute(okOutcome('light'), resolvedConfig as any, {}, missing);
