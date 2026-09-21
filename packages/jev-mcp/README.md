@@ -42,13 +42,14 @@ Add to the target profile's `cordis.patch.yml` (e.g.
       config:
         serverName: jev
         transport: stdio
-        command:
-          # stdio command must be an absolute path in GUI/launchd contexts
-          # (no fnm on PATH there). Adjust to your node location:
-          command: /Users/you/.local/share/fnm/aliases/default/bin/node
-          args:
-            - /Users/you/workspace/opensource/dsh-jev/packages/jev-mcp/dist/index.js
-          env:
+        # ⚠️ FLAT shape: command is the executable string; args/env are siblings.
+        # A nested `command: {command, args, env}` object fails schema validation
+        # and crashes the whole plugin tree at boot.
+        # Absolute paths are required in GUI/launchd contexts (no fnm on PATH).
+        command: /Users/you/.local/share/fnm/aliases/default/bin/node
+        args:
+          - /Users/you/workspace/opensource/dsh-jev/packages/jev-mcp/dist/index.js
+        env:
             JEV_API_KEY: <your-key>   # inline value; do not rely on ${VAR} expansion here
         toolCallTimeoutMs: 10000
         failOnStartupError: false
