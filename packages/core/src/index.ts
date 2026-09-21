@@ -88,9 +88,9 @@ export class JevClient {
   async choice(req: ChoiceRequest, fallback: ChoiceAnswer): Promise<JevOutcome<ChoiceAnswer>> {
     return this.call<ChoiceAnswer>('choice', { ...req }, fallback, (raw) => {
       const r = raw as Record<string, unknown> | undefined;
-      const idx = Number(r?.pickedIndex);
-      if (!Number.isInteger(idx) || idx < 0 || idx >= req.options.length) {
-        throw new Error(`pickedIndex out of range: ${JSON.stringify(r?.pickedIndex)}`);
+      const idx = r?.pickedIndex;
+      if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= req.options.length) {
+        throw new Error(`invalid pickedIndex: ${JSON.stringify(idx)}`);
       }
       return { pickedIndex: idx, picked: req.options[idx], rationale: r?.rationale as string | undefined };
     });
@@ -104,11 +104,10 @@ export class JevClient {
       if (arr.length !== req.criteria.length) {
         throw new Error(`expected ${req.criteria.length} scores, got ${arr.length}`);
       }
-      const scores = arr.map((s) => Number(s));
-      if (scores.some((s) => !Number.isFinite(s))) {
-        throw new Error('non-numeric score in response');
+      if (arr.some((s) => typeof s !== 'number' || !Number.isFinite(s) || s < 0 || s > 1)) {
+        throw new Error('invalid score in response: expected finite numbers in [0, 1]');
       }
-      return { scores, rationale: r?.rationale as string | undefined };
+      return { scores: arr as number[], rationale: r?.rationale as string | undefined };
     });
   }
 
