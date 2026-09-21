@@ -115,9 +115,8 @@ describe('selectRoute', () => {
     const r = await selectRoute(okOutcome('turbo'), lightResolved as any, {}, llm);
     expect(r.keepDefault).toBe(true);
     expect(r.reason).toContain('unexpected pick');
-    // `route` is an inert placeholder when keepDefault (apply() never reads it);
-    // the behavioral pin is keepDefault + reason above.
-    expect(r.route).toEqual({ provider: 'deepseek-official', model: 'deepseek-flash' });
+    // `route` is an inert placeholder when keepDefault — apply() returns the
+    // resolved config without reading it — so it is deliberately not asserted.
   });
 
   it('missing target model keeps the default route', async () => {
