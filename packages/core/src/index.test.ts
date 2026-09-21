@@ -65,6 +65,18 @@ describe('JevClient.choice', () => {
     expect(out.ok).toBe(false);
     expect(out.value.picked).toBe('x');
   });
+
+  it.each([null, false, '', [], true, '1', [1]])(
+    'degrades when pickedIndex has non-number value %j',
+    async (pickedIndex) => {
+      const c = new JevClient({ fetchImpl: vi.fn().mockResolvedValue(ok({ pickedIndex })) });
+      const fallback = { pickedIndex: 0, picked: 'x' };
+      const out = await c.choice({ question: 'q', options: ['x', 'y'] }, fallback);
+      expect(out.ok).toBe(false);
+      expect(out.value).toEqual(fallback);
+      expect(out.error).toContain('invalid pickedIndex');
+    }
+  );
 });
 
 describe('JevClient.score', () => {
@@ -88,6 +100,23 @@ describe('JevClient.score', () => {
     );
     expect(out.ok).toBe(false);
     expect(out.value.scores).toEqual([0.5, 0.5]);
+  });
+
+  it.each([
+    [null, true],
+    ['0.2', 0.8],
+    [[], 0.8],
+    [[0.2], 0.8],
+    [2, -1],
+    [Number.NaN, 0.8],
+    [Number.POSITIVE_INFINITY, 0.8],
+  ])('degrades on invalid score values %j', async (...scores) => {
+    const fallback = { scores: [0.5, 0.5] };
+    const c = new JevClient({ fetchImpl: vi.fn().mockResolvedValue(ok({ scores })) });
+    const out = await c.score({ subject: 'plan', criteria: ['cost', 'risk'] }, fallback);
+    expect(out.ok).toBe(false);
+    expect(out.value).toEqual(fallback);
+    expect(out.error).toContain('invalid score');
   });
 });
 

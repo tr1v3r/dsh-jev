@@ -48,7 +48,7 @@ Add to the target profile's `cordis.patch.yml` (e.g.
         # Absolute paths are required in GUI/launchd contexts (no fnm on PATH).
         command: /Users/you/.local/share/fnm/aliases/default/bin/node
         args:
-          - /Users/you/workspace/opensource/dsh-jev/packages/jev-mcp/dist/index.js
+          - /Users/you/workspace/opensource/dsh-jev/packages/jev-mcp/dist/bin.js
         env:
             JEV_API_KEY: <your-key>   # inline value; do not rely on ${VAR} expansion here
         toolCallTimeoutMs: 10000
@@ -79,9 +79,10 @@ profile is required to verify the plugin imports cleanly.
 
 ```sh
 pnpm install && pnpm build
-node dist/index.js   # speaks MCP over stdio
+node dist/bin.js   # speaks MCP over stdio
 ```
 
 Embedding in tests: `import { buildServer } from '@dsh-jev/mcp'` gives a
-`buildServer(client)` factory returning a `McpServer` (bin entry behavior
-unchanged).
+side-effect-free `buildServer(client)` factory returning a `McpServer`; it does
+not open stdio. The `dsh-jev-mcp` bin (or `node dist/bin.js`) is the dedicated
+stdio entry point.
