@@ -30,6 +30,25 @@ describe('JevClient.choice', () => {
     });
   });
 
+  it('combines caller cancellation with the internal timeout', async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const fetchImpl = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      observedSignal = init?.signal as AbortSignal;
+      observedSignal.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+    }));
+    const c = new JevClient({ fetchImpl, timeoutMs: 10_000 });
+    const pending = c.choice(
+      { question: 'q', options: ['x'], signal: controller.signal },
+      { pickedIndex: 0, picked: 'x' }
+    );
+    controller.abort(new Error('user cancelled'));
+    const out = await pending;
+    expect(observedSignal?.aborted).toBe(true);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain('user cancelled');
+  });
+
   it('degrades to fallback without throwing on HTTP 500', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('boom', { status: 500 }));
     const c = new JevClient({ fetchImpl });

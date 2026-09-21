@@ -89,8 +89,15 @@ interface CallConfig {
 }
 
 /** Minimal `ctx.llm` surface (read-only; we never mutate registrations). */
+interface ModelInfo {
+  provider: string;
+  id: string;
+  reasoning?: { efforts: ReadonlyArray<{ id: string }> };
+}
+
 interface LlmRegistry {
   listProviders(): Array<{ id: string; name?: string }>;
+  resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<ModelInfo>;
 }
 
 interface PluginContext {
@@ -125,23 +132,34 @@ export function sameRoute(a: { provider: string; model: string }, b: { provider:
   return a.provider === b.provider && a.model === b.model;
 }
 
-export function isProviderRegistered(llm: LlmRegistry | undefined, provider: string): boolean {
+async function validateRoute(
+  llm: LlmRegistry | undefined,
+  route: RouteSelection,
+  signal?: AbortSignal
+): Promise<string | undefined> {
+  if (!llm) return `target route ${route.provider}/${route.model} unavailable — keeping default`;
   try {
-    const providers = llm?.listProviders();
-    if (!Array.isArray(providers)) return false;
-    return providers.some((p) => p?.id === provider);
+    const info = await llm.resolveModelInfo(route.provider, route.model, signal);
+    if (info.provider !== route.provider || info.id !== route.model) {
+      return `target route ${route.provider}/${route.model} did not resolve exactly — keeping default`;
+    }
+    if (route.reasoningEffort !== undefined && !info.reasoning?.efforts.some((effort) => effort.id === route.reasoningEffort)) {
+      return `target effort ${route.reasoningEffort} unsupported by ${route.provider}/${route.model} — keeping default`;
+    }
+    return undefined;
   } catch {
-    return false;
+    return `target route ${route.provider}/${route.model} unavailable — keeping default`;
   }
 }
 
-/** Map a jev choice outcome to the target route, or undefined to keep default. */
-export function selectRoute(
+/** Map a jev choice outcome to a validated target route, or keep default. */
+export async function selectRoute(
   outcome: JevOutcome<ChoiceAnswer>,
   resolved: CallConfig,
   config: RouterConfig,
-  llm: LlmRegistry | undefined
-): { route: RouteSelection; keepDefault: boolean; reason: string } {
+  llm: LlmRegistry | undefined,
+  signal?: AbortSignal
+): Promise<{ route: RouteSelection; keepDefault: boolean; reason: string }> {
   const heavy = { ...DEFAULT_HEAVY, ...config.heavy };
   const light = { ...DEFAULT_LIGHT, ...config.light };
   if (!outcome.ok) {
@@ -152,9 +170,8 @@ export function selectRoute(
   if (sameRoute(route, resolved)) {
     return { route, keepDefault: true, reason: `already on ${route.provider}/${route.model}` };
   }
-  if (!isProviderRegistered(llm, route.provider)) {
-    return { route, keepDefault: true, reason: `target route ${route.provider} not registered — keeping default (registration is not this plugin's job)` };
-  }
+  const invalidReason = await validateRoute(llm, route, signal);
+  if (invalidReason) return { route, keepDefault: true, reason: invalidReason };
   return { route, keepDefault: false, reason: 'ok' };
 }
 
@@ -172,26 +189,65 @@ export function apply(ctx: PluginContext, config: RouterConfig = {}) {
     ...(config.fetchImpl !== undefined ? { fetchImpl: config.fetchImpl } : {}),
   });
 
-  /** Latest user text per agent per turn, captured at pre-step. */
+  /** Per-agent turn state is bounded and expires, while retaining settled outcomes for retries. */
   const turnText = new WeakMap<object, Map<number, string>>();
+  type DecisionEntry = { promise: Promise<JevOutcome<ChoiceAnswer>>; settledAt?: number };
+  const decisions = new WeakMap<object, Map<number, DecisionEntry>>();
+  const MAX_TURNS = 32;
+  const TURN_TTL_MS = 60_000;
 
-  const evaluate = async (agent: unknown, turn: number): Promise<JevOutcome<ChoiceAnswer>> => {
-    const text = turnText.get(agent as object)?.get(turn) ?? '';
+  const prune = (agent: object, now = Date.now()) => {
+    const perTurn = decisions.get(agent);
+    if (!perTurn) return;
+    for (const [turn, entry] of perTurn) {
+      if (entry.settledAt !== undefined && entry.settledAt + TURN_TTL_MS <= now) perTurn.delete(turn);
+    }
+    while (perTurn.size > MAX_TURNS) {
+      const oldestSettled = [...perTurn].find(([, entry]) => entry.settledAt !== undefined)?.[0];
+      if (oldestSettled === undefined) break; // Pending work is never evicted.
+      perTurn.delete(oldestSettled);
+    }
+  };
+
+  const evaluate = async (agent: unknown, turn: number, signal: AbortSignal): Promise<JevOutcome<ChoiceAnswer>> => {
+    const key = agent as object;
+    prune(key);
+    const perTurn = decisions.get(key) ?? new Map<number, DecisionEntry>();
+    decisions.set(key, perTurn);
+    const existing = perTurn.get(turn);
+    if (existing) return existing.promise;
+    const text = turnText.get(key)?.get(turn) ?? '';
     const question =
       'Classify the complexity of this assistant turn for model routing. ' +
       'Choose "heavy" when it needs strong reasoning (multi-step coding, debugging, architecture, long-context analysis). ' +
       'Choose "light" when a fast, cheap model suffices (simple Q&A, formatting, small lookups, chit-chat).';
-    return await jev.choice(
-      { question, options: ['heavy', 'light'], context: text ? { userTurn: text } : {} },
+    const promise = jev.choice(
+      { question, options: ['heavy', 'light'], context: text ? { userTurn: text } : {}, signal },
       { pickedIndex: 0, picked: 'heavy' } // structural fallback; degraded outcomes keep the default route anyway
     );
+    const entry: DecisionEntry = { promise };
+    perTurn.set(turn, entry);
+    void promise.finally(() => {
+      entry.settledAt = Date.now();
+      turnText.get(key)?.delete(turn);
+      prune(key);
+    });
+    prune(key);
+    return promise;
   };
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next();
-    const perTurn = turnText.get(payload.agent as object) ?? new Map<number, string>();
+    if (payload.signal.aborted) return decision;
+    const agent = payload.agent as object;
+    const perTurn = turnText.get(agent) ?? new Map<number, string>();
     perTurn.set(payload.turn, extractUserText(payload.messages));
-    turnText.set(payload.agent as object, perTurn);
+    while (perTurn.size > MAX_TURNS) {
+      const oldest = perTurn.keys().next().value as number | undefined;
+      if (oldest === undefined) break;
+      perTurn.delete(oldest);
+    }
+    turnText.set(agent, perTurn);
     return decision;
   });
 
@@ -199,12 +255,12 @@ export function apply(ctx: PluginContext, config: RouterConfig = {}) {
     const resolved = await next();
     let outcome: JevOutcome<ChoiceAnswer>;
     try {
-      outcome = await evaluate(payload.agent, payload.turn);
+      outcome = await evaluate(payload.agent, payload.turn, payload.signal);
     } catch {
       // JevClient contractually never throws, but stay defensive: keep default.
       return resolved;
     }
-    const { route, keepDefault, reason } = selectRoute(outcome, resolved, config, ctx.llm);
+    const { route, keepDefault, reason } = await selectRoute(outcome, resolved, config, ctx.llm, payload.signal);
     const label = `turn=${payload.turn} step=${payload.step} picked=${outcome.value.picked}` +
       (outcome.ok ? '' : ` (degraded)`) +
       ` target=${route.provider}/${route.model}` +
