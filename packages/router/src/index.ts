@@ -189,9 +189,10 @@ export function apply(ctx: PluginContext, config: RouterConfig = {}) {
     ...(config.fetchImpl !== undefined ? { fetchImpl: config.fetchImpl } : {}),
   });
 
-  /** Per-agent turn state is bounded and expires, while retaining outcomes for retries. */
+  /** Per-agent turn state is bounded and expires, while retaining settled outcomes for retries. */
   const turnText = new WeakMap<object, Map<number, string>>();
-  const decisions = new WeakMap<object, Map<number, { promise: Promise<JevOutcome<ChoiceAnswer>>; expiresAt: number }>>();
+  type DecisionEntry = { promise: Promise<JevOutcome<ChoiceAnswer>>; settledAt?: number };
+  const decisions = new WeakMap<object, Map<number, DecisionEntry>>();
   const MAX_TURNS = 32;
   const TURN_TTL_MS = 60_000;
 
@@ -199,23 +200,19 @@ export function apply(ctx: PluginContext, config: RouterConfig = {}) {
     const perTurn = decisions.get(agent);
     if (!perTurn) return;
     for (const [turn, entry] of perTurn) {
-      if (entry.expiresAt <= now) {
-        perTurn.delete(turn);
-        turnText.get(agent)?.delete(turn);
-      }
+      if (entry.settledAt !== undefined && entry.settledAt + TURN_TTL_MS <= now) perTurn.delete(turn);
     }
     while (perTurn.size > MAX_TURNS) {
-      const oldest = perTurn.keys().next().value as number | undefined;
-      if (oldest === undefined) break;
-      perTurn.delete(oldest);
-      turnText.get(agent)?.delete(oldest);
+      const oldestSettled = [...perTurn].find(([, entry]) => entry.settledAt !== undefined)?.[0];
+      if (oldestSettled === undefined) break; // Pending work is never evicted.
+      perTurn.delete(oldestSettled);
     }
   };
 
   const evaluate = async (agent: unknown, turn: number, signal: AbortSignal): Promise<JevOutcome<ChoiceAnswer>> => {
     const key = agent as object;
     prune(key);
-    const perTurn = decisions.get(key) ?? new Map<number, { promise: Promise<JevOutcome<ChoiceAnswer>>; expiresAt: number }>();
+    const perTurn = decisions.get(key) ?? new Map<number, DecisionEntry>();
     decisions.set(key, perTurn);
     const existing = perTurn.get(turn);
     if (existing) return existing.promise;
@@ -228,16 +225,29 @@ export function apply(ctx: PluginContext, config: RouterConfig = {}) {
       { question, options: ['heavy', 'light'], context: text ? { userTurn: text } : {}, signal },
       { pickedIndex: 0, picked: 'heavy' } // structural fallback; degraded outcomes keep the default route anyway
     );
-    perTurn.set(turn, { promise, expiresAt: Date.now() + TURN_TTL_MS });
+    const entry: DecisionEntry = { promise };
+    perTurn.set(turn, entry);
+    void promise.finally(() => {
+      entry.settledAt = Date.now();
+      turnText.get(key)?.delete(turn);
+      prune(key);
+    });
     prune(key);
     return promise;
   };
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next();
-    const perTurn = turnText.get(payload.agent as object) ?? new Map<number, string>();
+    if (payload.signal.aborted) return decision;
+    const agent = payload.agent as object;
+    const perTurn = turnText.get(agent) ?? new Map<number, string>();
     perTurn.set(payload.turn, extractUserText(payload.messages));
-    turnText.set(payload.agent as object, perTurn);
+    while (perTurn.size > MAX_TURNS) {
+      const oldest = perTurn.keys().next().value as number | undefined;
+      if (oldest === undefined) break;
+      perTurn.delete(oldest);
+    }
+    turnText.set(agent, perTurn);
     return decision;
   });
 

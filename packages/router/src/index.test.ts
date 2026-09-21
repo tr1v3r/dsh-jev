@@ -235,6 +235,45 @@ describe('apply', () => {
     expect(observed?.aborted).toBe(true);
   });
 
+  it('never evicts a pending same-turn decision after the TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const h = makeHarness();
+      apply(h.ctx, { fetchImpl: async () => { calls++; await gate; return Response.json({ answer: { pickedIndex: 0, picked: 'heavy' } }); }, log: () => {}, timeoutMs: 120_000 });
+      const agent = {};
+      const listener = h.listeners.get('agent/request')!;
+      const signal = new AbortController().signal;
+      const next = async () => ({ ...resolvedConfig });
+      const first = listener({ agent, turn: 6, step: 1, signal }, next);
+      await vi.advanceTimersByTimeAsync(60_001);
+      const later = listener({ agent, turn: 6, step: 2, signal }, next);
+      expect(calls).toBe(1);
+      release();
+      await Promise.all([first, later]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds pre-step-only text and skips cancelled captures without a JEV request', async () => {
+    const { fetchImpl, calls } = mockJevFetch('heavy');
+    const h = makeHarness();
+    apply(h.ctx, { fetchImpl, log: () => {} });
+    const agent = {};
+    const preStep = h.listeners.get('agent/pre-step')!;
+    for (let turn = 1; turn <= 33; turn++) {
+      await preStep({ agent, turn, step: 1, messages: [{ content: [{ type: 'text', text: `turn-${turn}` }] }], signal: new AbortController().signal }, async () => ({}));
+    }
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await preStep({ agent, turn: 34, step: 1, messages: [{ content: [{ type: 'text', text: 'cancelled' }] }], signal: cancelled.signal }, async () => ({}));
+    await h.listeners.get('agent/request')!({ agent, turn: 1, step: 1, signal: new AbortController().signal }, async () => ({ ...resolvedConfig }));
+    expect(calls[0].body.context.userTurn ?? '').toBe('');
+  });
+
   it('bounds retained turn decisions and evicts the oldest entry', async () => {
     const { fetchImpl, calls } = mockJevFetch('heavy');
     const h = makeHarness();

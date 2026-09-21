@@ -58,16 +58,12 @@ export function apply(ctx, config = {}) {
     const perTurn = decisions.get(agent);
     if (!perTurn) return;
     for (const [turn, entry] of perTurn) {
-      if (entry.expiresAt <= now) {
-        perTurn.delete(turn);
-        turnText.get(agent)?.delete(turn);
-      }
+      if (entry.settledAt !== undefined && entry.settledAt + TURN_TTL_MS <= now) perTurn.delete(turn);
     }
     while (perTurn.size > MAX_TURNS) {
-      const oldest = perTurn.keys().next().value;
-      if (oldest === undefined) break;
-      perTurn.delete(oldest);
-      turnText.get(agent)?.delete(oldest);
+      const oldestSettled = [...perTurn].find(([, entry]) => entry.settledAt !== undefined)?.[0];
+      if (oldestSettled === undefined) break; // Pending work is never evicted.
+      perTurn.delete(oldestSettled);
     }
   };
 
@@ -90,15 +86,27 @@ export function apply(ctx, config = {}) {
       },
       { pickedIndex: 0, picked: 'keep' }
     );
-    perTurn.set(payload.turn, { promise, expiresAt: Date.now() + TURN_TTL_MS });
+    const entry = { promise, settledAt: undefined };
+    perTurn.set(payload.turn, entry);
+    void promise.finally(() => {
+      entry.settledAt = Date.now();
+      turnText.get(payload.agent)?.delete(payload.turn);
+      prune(payload.agent);
+    });
     prune(payload.agent);
     return promise;
   };
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next();
+    if (!enabled || payload.signal.aborted) return decision;
     const perTurn = turnText.get(payload.agent) ?? new Map();
     perTurn.set(payload.turn, latestUserText(payload.messages));
+    while (perTurn.size > MAX_TURNS) {
+      const oldest = perTurn.keys().next().value;
+      if (oldest === undefined) break;
+      perTurn.delete(oldest);
+    }
     turnText.set(payload.agent, perTurn);
     return decision;
   });

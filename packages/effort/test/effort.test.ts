@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { apply, canLowerEffort, decideEffort, latestUserText } from '../lib/index.js';
 
 function mockJevFetch(picked: string) {
@@ -162,6 +162,52 @@ describe('apply', () => {
     controller.abort(new Error('cancelled'));
     expect(await pending).toEqual(base);
     expect(observed.aborted).toBe(true);
+  });
+
+  it('never evicts a pending same-turn decision after the TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = makeHarness();
+      let calls = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      apply(h.ctx, { fetchImpl: async () => { calls++; await gate; return Response.json({ answer: { pickedIndex: 0, picked: 'keep' } }); }, log: () => {}, timeoutMs: 120_000 });
+      const agent = {};
+      const signal = new AbortController().signal;
+      const listener = h.listeners.get('agent/request')!;
+      const next = async () => ({ ...base });
+      const first = listener({ agent, turn: 6, step: 1, signal }, next);
+      await vi.advanceTimersByTimeAsync(60_001);
+      const later = listener({ agent, turn: 6, step: 2, signal }, next);
+      expect(calls).toBe(1);
+      release();
+      await Promise.all([first, later]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds pre-step-only text, skips cancelled captures, and captures nothing when disabled', async () => {
+    for (const enabled of [true, false]) {
+      const h = makeHarness();
+      const calls: Array<{ body: any }> = [];
+      apply(h.ctx, { enabled, fetchImpl: async (_url: unknown, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) });
+        return Response.json({ answer: { pickedIndex: 0, picked: 'keep' } });
+      }, log: () => {} });
+      const agent = {};
+      const preStep = h.listeners.get('agent/pre-step')!;
+      for (let turn = 1; turn <= 33; turn++) {
+        await preStep({ agent, turn, step: 1, messages: [{ content: [{ type: 'text', text: `turn-${turn}` }] }], signal: new AbortController().signal }, async () => ({}));
+      }
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await preStep({ agent, turn: 34, step: 1, messages: [{ content: [{ type: 'text', text: 'cancelled' }] }], signal: cancelled.signal }, async () => ({}));
+      const listener = h.listeners.get('agent/request')!;
+      await listener({ agent, turn: 1, step: 1, signal: new AbortController().signal }, async () => ({ ...base }));
+      if (enabled) expect(calls[0].body.context.userTurn ?? '').toBe('');
+      else expect(calls).toHaveLength(0);
+    }
   });
 
   it('bounds retained turn decisions and evicts the oldest entry', async () => {
