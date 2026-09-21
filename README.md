@@ -12,7 +12,8 @@ jev (System One, `api.typesafe.ai`) × DeepSeek Harness (dsh) integration monore
 
 ## Install (published packages)
 
-All four packages are published to npm (0.1.1):
+All four packages are published to npm (`@dsh-jev/effort` 0.1.2; the other
+packages 0.1.1):
 
 ```sh
 npm i @dsh-jev/core          # library client

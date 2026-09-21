@@ -1,6 +1,6 @@
 {
   "name": "@dsh-jev/effort",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "dsh Web-only plugin: jev System One lowers reasoning effort to low for simple turns, with a dismissible composer hint",
   "keywords": [
     "dsh",

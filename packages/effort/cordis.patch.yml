@@ -4,7 +4,7 @@
 
 - insert:
     - id: jev-effort
-      name: dsh-jev-effort
+      name: '@dsh-jev/effort'
       config:
         enabled: true
         # targetEffort: low

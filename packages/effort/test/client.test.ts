@@ -23,7 +23,7 @@ beforeEach(async () => {
   effects = [];
   (window as unknown as { __ModuleLoader__: unknown }).__ModuleLoader__ = {
     load: (spec: { id: string; factory: () => Record<string, unknown> }) => {
-      expect(spec.id).toBe('dsh-jev-effort');
+      expect(spec.id).toBe('@dsh-jev/effort');
       factory = spec.factory;
     },
   };
@@ -81,7 +81,7 @@ function applyWithLocale(mode: 'ok' | 'none' | 'throw' = 'ok') {
 }
 
 describe('module registration', () => {
-  it('registers via window.__ModuleLoader__ with id dsh-jev-effort and injects locale', async () => {
+  it('registers via window.__ModuleLoader__ with the published package id and injects locale', async () => {
     await import('../lib/client.js');
     const ex = loadClient();
     expect(ex.inject).toEqual(['locale']);

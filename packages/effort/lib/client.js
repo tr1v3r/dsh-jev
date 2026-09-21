@@ -12,10 +12,10 @@
  *  3. versioned global state + element ownership survive client hot-swaps;
  *  4. old hosts degrade silently (no locale → English copy, no composer → hidden).
  *
- * @module dsh-jev-effort/client
+ * @module @dsh-jev/effort/client
  */
 window.__ModuleLoader__.load({
-	id: "dsh-jev-effort",
+	id: "@dsh-jev/effort",
 	factory: () => {
 		const exports = {};
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
