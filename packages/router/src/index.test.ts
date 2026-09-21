@@ -109,10 +109,15 @@ describe('selectRoute', () => {
   });
 
   it('unexpected picked value keeps the default route instead of falling through to heavy', async () => {
-    const r = await selectRoute(okOutcome('turbo'), resolvedConfig as any, {}, llm);
+    // resolved is the LIGHT route: before the fix, an unexpected pick silently
+    // enforced a switch to heavy (keepDefault: false) — the #8 failure mode.
+    const lightResolved = { provider: 'zai-coding-cn', model: 'glm-5.3-flash' };
+    const r = await selectRoute(okOutcome('turbo'), lightResolved as any, {}, llm);
     expect(r.keepDefault).toBe(true);
     expect(r.reason).toContain('unexpected pick');
-    expect(r.route).toEqual(resolvedConfig);
+    // `route` is an inert placeholder when keepDefault (apply() never reads it);
+    // the behavioral pin is keepDefault + reason above.
+    expect(r.route).toEqual({ provider: 'deepseek-official', model: 'deepseek-flash' });
   });
 
   it('missing target model keeps the default route', async () => {
