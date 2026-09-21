@@ -34,7 +34,7 @@ export interface RouterConfig {
   timeoutMs?: number;
   /** Injectable fetch for tests. */
   fetchImpl?: typeof fetch;
-  /** Injectable logger for tests. */
+  /** Injectable logger for tests. Defaults to stderr so TUI stdout stays renderer-only. */
   log?: (line: string) => void;
 }
 
@@ -181,7 +181,10 @@ export async function selectRoute(
 
 export function apply(ctx: PluginContext, config: RouterConfig = {}) {
   const mode = config.mode ?? 'shadow';
-  const log = config.log ?? ((line: string) => process.stdout.write(line + '\n'));
+  // dsh-tui owns stdout for terminal rendering. Direct writes there land at
+  // the active cursor and can overwrite the composer; stderr is intercepted
+  // by the TUI and routed to its debug log instead.
+  const log = config.log ?? ((line: string) => process.stderr.write(line + '\n'));
   const jev: JevClient = createJevClient({
     ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
     ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
