@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 /**
@@ -10,6 +13,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
  * hot-swap ownership, and old-host degradation.
  */
 
+const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const packageVersion = (JSON.parse(readFileSync(resolve(packageDir, 'package.json'), 'utf8')) as { version: string }).version;
 const STATE = Symbol.for('dsh-jev-effort.state');
 const HINT_ID = 'dsh-jev-effort-hint';
 const DISMISS_KEY = 'dsh-jev-effort.hint.dismissed';
@@ -142,6 +147,30 @@ describe('render + locale', () => {
     expect(document.getElementById('dsh-jev-effort-style')).toBeNull();
   });
 
+  it('coalesces mutation bursts into one animation-frame scan and disconnects after mounting', async () => {
+    await import('../lib/client.js');
+    document.body.innerHTML = '';
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
+    const query = vi.spyOn(document, 'querySelector');
+    applyWithLocale('none');
+    const scansAfterApply = query.mock.calls.length;
+    document.body.append(document.createElement('div'), document.createElement('div'));
+    await Promise.resolve();
+    expect(frames).toHaveLength(1);
+    expect(query.mock.calls.length).toBe(scansAfterApply);
+    document.body.innerHTML = '<div id="wrap"><div data-slot="conversation.composer" id="composer"></div></div>';
+    await Promise.resolve();
+    expect(frames).toHaveLength(1);
+    frames[0](performance.now());
+    expect(hint()).not.toBeNull();
+    expect(disconnect).toHaveBeenCalled();
+  });
+
   it('treats a throwing localStorage as not-dismissed', async () => {
     await import('../lib/client.js');
     const getter = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
@@ -178,13 +207,13 @@ describe('dismissal + ownership', () => {
     applyWithLocale('none');
     const stale = hint()!;
     stale.setAttribute('data-dsh-jev-effort-version', '0.0.1');
-    // New version replaces it: remove() on stale is fine, new bar stamped 0.1.0
+    // New version replaces it: remove() on stale is fine, new bar uses manifest version.
     // Simulate hot swap by clearing state then re-applying.
     delete (globalThis as Record<symbol, unknown>)[STATE];
     applyWithLocale('none');
     const fresh = hint()!;
     expect(fresh).not.toBe(stale);
-    expect(fresh.getAttribute('data-dsh-jev-effort-version')).toBe('0.1.0');
+    expect(fresh.getAttribute('data-dsh-jev-effort-version')).toBe(packageVersion);
     // A stale bar (wrong stamp) is left alone by cleanup: re-stamp fresh as stale.
     fresh.setAttribute('data-dsh-jev-effort-version', '0.0.1');
     const state = (globalThis as Record<symbol, { dispose: () => void }>)[STATE];

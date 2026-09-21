@@ -25,7 +25,10 @@ interface Harness {
   ctx: any;
 }
 
-function makeHarness(llm: any = { listProviders: () => [{ id: 'deepseek-official' }, { id: 'zai-coding-cn' }] }): Harness {
+function makeHarness(llm: any = {
+  listProviders: () => [{ id: 'deepseek-official' }, { id: 'zai-coding-cn' }],
+  resolveModelInfo: async (provider: string, model: string) => ({ provider, id: model }),
+}): Harness {
   const listeners = new Map<string, (payload: any, next: () => Promise<any>) => Promise<any>>();
   const ctx = {
     llm,
@@ -83,35 +86,46 @@ const degraded: JevOutcome<ChoiceAnswer> = {
 };
 
 describe('selectRoute', () => {
-  const llm = { listProviders: () => [{ id: 'deepseek-official' }, { id: 'zai-coding-cn' }] };
+  const llm = {
+    listProviders: () => [{ id: 'deepseek-official' }, { id: 'zai-coding-cn' }],
+    resolveModelInfo: async (provider: string, model: string) => ({ provider, id: model }),
+  };
 
-  it('light pick maps to the light route', () => {
-    const r = selectRoute(okOutcome('light'), resolvedConfig as any, {}, llm);
+  it('light pick maps to the light route', async () => {
+    const r = await selectRoute(okOutcome('light'), resolvedConfig as any, {}, llm);
     expect(r.keepDefault).toBe(false);
     expect(r.route).toEqual({ provider: 'zai-coding-cn', model: 'glm-5.3-flash' });
   });
 
-  it('heavy pick keeps the heavy route when already there', () => {
-    const r = selectRoute(okOutcome('heavy'), resolvedConfig as any, {}, llm);
+  it('heavy pick keeps the heavy route when already there', async () => {
+    const r = await selectRoute(okOutcome('heavy'), resolvedConfig as any, {}, llm);
     expect(r.keepDefault).toBe(true); // already on heavy
   });
 
-  it('degraded outcome keeps the default route', () => {
-    const r = selectRoute(degraded, resolvedConfig as any, {}, llm);
+  it('degraded outcome keeps the default route', async () => {
+    const r = await selectRoute(degraded, resolvedConfig as any, {}, llm);
     expect(r.keepDefault).toBe(true);
     expect(r.reason).toContain('degraded');
   });
 
-  it('unregistered target provider keeps the default route', () => {
-    const emptyLlm = { listProviders: () => [{ id: 'deepseek-official' }] };
-    const r = selectRoute(okOutcome('light'), resolvedConfig as any, {}, emptyLlm);
+  it('missing target model keeps the default route', async () => {
+    const missing = { listProviders: () => [], resolveModelInfo: async () => { throw new Error('missing'); } };
+    const r = await selectRoute(okOutcome('light'), resolvedConfig as any, {}, missing);
     expect(r.keepDefault).toBe(true);
-    expect(r.reason).toContain('not registered');
+    expect(r.reason).toContain('unavailable');
   });
 
-  it('throwing listProviders is treated as unregistered', () => {
-    const badLlm = { listProviders: () => { throw new Error('boom'); } };
-    expect(selectRoute(okOutcome('light'), resolvedConfig as any, {}, badLlm).keepDefault).toBe(true);
+  it('provider/model mismatch keeps the default route', async () => {
+    const mismatch = { listProviders: () => [], resolveModelInfo: async () => ({ provider: 'other', id: 'wrong' }) };
+    expect((await selectRoute(okOutcome('light'), resolvedConfig as any, {}, mismatch)).keepDefault).toBe(true);
+  });
+
+  it('unsupported target effort keeps the default route', async () => {
+    const r = await selectRoute(okOutcome('light'), resolvedConfig as any, {
+      light: { provider: 'zai-coding-cn', model: 'glm-5.3-flash', reasoningEffort: 'turbo' },
+    }, llm);
+    expect(r.keepDefault).toBe(true);
+    expect(r.reason).toContain('unsupported');
   });
 });
 
@@ -190,6 +204,104 @@ describe('apply', () => {
     await h.listeners.get('agent/request')!({ agent, turn: 3, step: 1, signal: new AbortController().signal }, async () => ({ ...resolvedConfig }));
     expect(calls[0].body.context.userTurn).toBe('refactor the parser');
     expect(calls[0].body.options).toEqual(['heavy', 'light']);
+  });
+
+  it('reuses one JEV decision for concurrent requests and later steps/retries', async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      await gate;
+      return Response.json({ answer: { pickedIndex: 1, picked: 'light' } });
+    });
+    const h = makeHarness();
+    apply(h.ctx, { fetchImpl, log: () => {}, mode: 'enforce' });
+    const agent = {};
+    await h.listeners.get('agent/pre-step')!({ agent, turn: 7, step: 1, messages: [], signal: new AbortController().signal }, async () => ({}));
+    const listener = h.listeners.get('agent/request')!;
+    const next = async () => ({ ...resolvedConfig });
+    const first = listener({ agent, turn: 7, step: 1, signal: new AbortController().signal }, next);
+    const concurrent = listener({ agent, turn: 7, step: 1, signal: new AbortController().signal }, next);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    release();
+    await Promise.all([first, concurrent]);
+    await listener({ agent, turn: 7, step: 2, signal: new AbortController().signal }, next);
+    await listener({ agent, turn: 7, step: 1, signal: new AbortController().signal }, next);
+    expect(calls).toBe(1);
+  });
+
+  it('propagates request cancellation to the JEV fetch', async () => {
+    let observed: AbortSignal | undefined;
+    const fetchImpl = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      observed = init?.signal as AbortSignal;
+      observed.addEventListener('abort', () => reject(observed?.reason), { once: true });
+    }));
+    const h = makeHarness();
+    apply(h.ctx, { fetchImpl, log: () => {}, mode: 'enforce', timeoutMs: 10_000 });
+    const controller = new AbortController();
+    const agent = {};
+    const pending = h.listeners.get('agent/request')!(
+      { agent, turn: 8, step: 1, signal: controller.signal },
+      async () => ({ ...resolvedConfig })
+    );
+    await vi.waitFor(() => expect(observed).toBeDefined());
+    controller.abort(new Error('cancelled'));
+    expect(await pending).toEqual(resolvedConfig);
+    expect(observed?.aborted).toBe(true);
+  });
+
+  it('never evicts a pending same-turn decision after the TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const h = makeHarness();
+      apply(h.ctx, { fetchImpl: async () => { calls++; await gate; return Response.json({ answer: { pickedIndex: 0, picked: 'heavy' } }); }, log: () => {}, timeoutMs: 120_000 });
+      const agent = {};
+      const listener = h.listeners.get('agent/request')!;
+      const signal = new AbortController().signal;
+      const next = async () => ({ ...resolvedConfig });
+      const first = listener({ agent, turn: 6, step: 1, signal }, next);
+      await vi.advanceTimersByTimeAsync(60_001);
+      const later = listener({ agent, turn: 6, step: 2, signal }, next);
+      expect(calls).toBe(1);
+      release();
+      await Promise.all([first, later]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds pre-step-only text and skips cancelled captures without a JEV request', async () => {
+    const { fetchImpl, calls } = mockJevFetch('heavy');
+    const h = makeHarness();
+    apply(h.ctx, { fetchImpl, log: () => {} });
+    const agent = {};
+    const preStep = h.listeners.get('agent/pre-step')!;
+    for (let turn = 1; turn <= 33; turn++) {
+      await preStep({ agent, turn, step: 1, messages: [{ content: [{ type: 'text', text: `turn-${turn}` }] }], signal: new AbortController().signal }, async () => ({}));
+    }
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await preStep({ agent, turn: 34, step: 1, messages: [{ content: [{ type: 'text', text: 'cancelled' }] }], signal: cancelled.signal }, async () => ({}));
+    await h.listeners.get('agent/request')!({ agent, turn: 1, step: 1, signal: new AbortController().signal }, async () => ({ ...resolvedConfig }));
+    expect(calls[0].body.context.userTurn ?? '').toBe('');
+  });
+
+  it('bounds retained turn decisions and evicts the oldest entry', async () => {
+    const { fetchImpl, calls } = mockJevFetch('heavy');
+    const h = makeHarness();
+    apply(h.ctx, { fetchImpl, log: () => {} });
+    const agent = {};
+    const listener = h.listeners.get('agent/request')!;
+    const next = async () => ({ ...resolvedConfig });
+    for (let turn = 1; turn <= 33; turn++) {
+      await listener({ agent, turn, step: 1, signal: new AbortController().signal }, next);
+    }
+    await listener({ agent, turn: 1, step: 2, signal: new AbortController().signal }, next);
+    expect(calls).toHaveLength(34);
   });
 
   it('custom routes are honored', async () => {

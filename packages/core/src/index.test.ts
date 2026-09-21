@@ -30,6 +30,25 @@ describe('JevClient.choice', () => {
     });
   });
 
+  it('combines caller cancellation with the internal timeout', async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const fetchImpl = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      observedSignal = init?.signal as AbortSignal;
+      observedSignal.addEventListener('abort', () => reject(observedSignal?.reason), { once: true });
+    }));
+    const c = new JevClient({ fetchImpl, timeoutMs: 10_000 });
+    const pending = c.choice(
+      { question: 'q', options: ['x'], signal: controller.signal },
+      { pickedIndex: 0, picked: 'x' }
+    );
+    controller.abort(new Error('user cancelled'));
+    const out = await pending;
+    expect(observedSignal?.aborted).toBe(true);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain('user cancelled');
+  });
+
   it('degrades to fallback without throwing on HTTP 500', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('boom', { status: 500 }));
     const c = new JevClient({ fetchImpl });
@@ -46,6 +65,18 @@ describe('JevClient.choice', () => {
     expect(out.ok).toBe(false);
     expect(out.value.picked).toBe('x');
   });
+
+  it.each([null, false, '', [], true, '1', [1]])(
+    'degrades when pickedIndex has non-number value %j',
+    async (pickedIndex) => {
+      const c = new JevClient({ fetchImpl: vi.fn().mockResolvedValue(ok({ pickedIndex })) });
+      const fallback = { pickedIndex: 0, picked: 'x' };
+      const out = await c.choice({ question: 'q', options: ['x', 'y'] }, fallback);
+      expect(out.ok).toBe(false);
+      expect(out.value).toEqual(fallback);
+      expect(out.error).toContain('invalid pickedIndex');
+    }
+  );
 });
 
 describe('JevClient.score', () => {
@@ -69,6 +100,23 @@ describe('JevClient.score', () => {
     );
     expect(out.ok).toBe(false);
     expect(out.value.scores).toEqual([0.5, 0.5]);
+  });
+
+  it.each([
+    [null, true],
+    ['0.2', 0.8],
+    [[], 0.8],
+    [[0.2], 0.8],
+    [2, -1],
+    [Number.NaN, 0.8],
+    [Number.POSITIVE_INFINITY, 0.8],
+  ])('degrades on invalid score values %j', async (...scores) => {
+    const fallback = { scores: [0.5, 0.5] };
+    const c = new JevClient({ fetchImpl: vi.fn().mockResolvedValue(ok({ scores })) });
+    const out = await c.score({ subject: 'plan', criteria: ['cost', 'risk'] }, fallback);
+    expect(out.ok).toBe(false);
+    expect(out.value).toEqual(fallback);
+    expect(out.error).toContain('invalid score');
   });
 });
 

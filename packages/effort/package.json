@@ -23,6 +23,7 @@
     "README.md"
   ],
   "scripts": {
+    "build": "node --input-type=module -e \"import fs from 'node:fs'; const manifest=JSON.parse(fs.readFileSync('package.json','utf8')); const file='lib/client.js'; const source=fs.readFileSync(file,'utf8'); const pattern=/const CLIENT_VERSION = \\\"[^\\\"]+\\\"; \\/\\/ injected from package\\.json by the build script/; if(!pattern.test(source)) throw new Error('CLIENT_VERSION injection marker missing'); fs.writeFileSync(file,source.replace(pattern,'const CLIENT_VERSION = \\\"'+manifest.version+'\\\"; // injected from package.json by the build script'));\"",
     "test": "node --check lib/index.js && node --check lib/client.js && vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

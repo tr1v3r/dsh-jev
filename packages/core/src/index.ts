@@ -38,17 +38,21 @@ export interface ChoiceRequest {
   options: string[];
   /** Optional free-form context forwarded to System One. */
   context?: Record<string, unknown>;
+  /** Optional caller cancellation, combined with the client's timeout. */
+  signal?: AbortSignal;
 }
 
 export interface ScoreRequest {
   subject: string;
   criteria: string[];
   context?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface NoulRequest {
   prompt: string;
   context?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface ChoiceAnswer {
@@ -86,48 +90,51 @@ export class JevClient {
 
   /** Pick one option; falls back to `fallback.pickedIndex`. */
   async choice(req: ChoiceRequest, fallback: ChoiceAnswer): Promise<JevOutcome<ChoiceAnswer>> {
-    return this.call<ChoiceAnswer>('choice', { ...req }, fallback, (raw) => {
+    const { signal, ...body } = req;
+    return this.call<ChoiceAnswer>('choice', body, fallback, (raw) => {
       const r = raw as Record<string, unknown> | undefined;
-      const idx = Number(r?.pickedIndex);
-      if (!Number.isInteger(idx) || idx < 0 || idx >= req.options.length) {
-        throw new Error(`pickedIndex out of range: ${JSON.stringify(r?.pickedIndex)}`);
+      const idx = r?.pickedIndex;
+      if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= req.options.length) {
+        throw new Error(`invalid pickedIndex: ${JSON.stringify(idx)}`);
       }
       return { pickedIndex: idx, picked: req.options[idx], rationale: r?.rationale as string | undefined };
-    });
+    }, signal);
   }
 
   /** Score a subject against criteria; falls back to `fallback.scores`. */
   async score(req: ScoreRequest, fallback: ScoreAnswer): Promise<JevOutcome<ScoreAnswer>> {
-    return this.call<ScoreAnswer>('score', { ...req }, fallback, (raw) => {
+    const { signal, ...body } = req;
+    return this.call<ScoreAnswer>('score', body, fallback, (raw) => {
       const r = raw as Record<string, unknown> | undefined;
       const arr = Array.isArray(r?.scores) ? (r!.scores as unknown[]) : [];
       if (arr.length !== req.criteria.length) {
         throw new Error(`expected ${req.criteria.length} scores, got ${arr.length}`);
       }
-      const scores = arr.map((s) => Number(s));
-      if (scores.some((s) => !Number.isFinite(s))) {
-        throw new Error('non-numeric score in response');
+      if (arr.some((s) => typeof s !== 'number' || !Number.isFinite(s) || s < 0 || s > 1)) {
+        throw new Error('invalid score in response: expected finite numbers in [0, 1]');
       }
-      return { scores, rationale: r?.rationale as string | undefined };
-    });
+      return { scores: arr as number[], rationale: r?.rationale as string | undefined };
+    }, signal);
   }
 
   /** Open "noul" (no-output unconstrained) reflection; falls back to `fallback.text`. */
   async noul(req: NoulRequest, fallback: NoulAnswer): Promise<JevOutcome<NoulAnswer>> {
-    return this.call<NoulAnswer>('noul', { ...req }, fallback, (raw) => {
+    const { signal, ...body } = req;
+    return this.call<NoulAnswer>('noul', body, fallback, (raw) => {
       const r = raw as Record<string, unknown> | undefined;
       if (typeof r?.text !== 'string' || r.text.length === 0) {
         throw new Error('missing text in response');
       }
       return { text: r.text, rationale: r.rationale as string | undefined };
-    });
+    }, signal);
   }
 
   private async call<T>(
     primitive: JevPrimitive,
     body: object,
     fallback: T,
-    parse: (raw: unknown) => T
+    parse: (raw: unknown) => T,
+    signal?: AbortSignal
   ): Promise<JevOutcome<T>> {
     const started = Date.now();
     const fail = (error: string): JevOutcome<T> => ({
@@ -146,7 +153,9 @@ export class JevClient {
         method: 'POST',
         headers,
         body: JSON.stringify({ primitive, ...body }),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
+          : AbortSignal.timeout(this.timeoutMs),
       });
       if (!res.ok) {
         return fail(`HTTP ${res.status}`);

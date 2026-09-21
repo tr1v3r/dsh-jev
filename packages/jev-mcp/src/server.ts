@@ -27,7 +27,10 @@ export function buildServer(client: Pick<JevClient, 'choice' | 'score' | 'noul'>
       fallbackPick: z.string().optional().describe('Option to use if jev is unavailable (default: first option)'),
     },
     async ({ question, options, fallbackPick }) => {
-      const fbIndex = Math.max(0, options.indexOf(fallbackPick ?? options[0]));
+      const fbIndex = fallbackPick === undefined ? 0 : options.indexOf(fallbackPick);
+      if (fbIndex < 0) {
+        throw new Error('fallbackPick must match one of options');
+      }
       const out = await client.choice(
         { question, options },
         { pickedIndex: fbIndex, picked: options[fbIndex] }
