@@ -17,7 +17,8 @@ turn's complexity:
   already present in `ctx.llm`, via the `agent/request` waterfall — and only
   after double-checking the target provider is actually registered
   (`ctx.llm.listProviders()`). An unregistered target keeps the default route.
-- **Shadow-run by default.** Decisions are logged to stdout
+- **Shadow-run by default.** Decisions are logged to stderr (which dsh-tui
+  captures without disturbing its stdout-rendered composer)
   (`[dsh-jev-router] turn=… picked=… target=… shadow`) and nothing changes.
   Set `mode: enforce` in the plugin config to actually switch.
 - **Degrades, never breaks.** jev unreachable / timeout / non-2xx → the
@@ -59,5 +60,5 @@ also be given explicitly as `endpoint` / `timeoutMs` / `apiKey` config keys.
 
 ```sh
 pnpm --filter @dsh-jev/router build
-pnpm --filter @dsh-jev/router test   # 13 tests: routing, fallback, shadow vs enforce
+pnpm --filter @dsh-jev/router test   # routing, fallback, shadow vs enforce, TUI-safe logging
 ```

@@ -101,6 +101,6 @@ router README 的示例需要改（`path:` → `name:`）。
 1. 把 overlay 里的 `- insert:` 三段并入 `~/.config/dsh/profiles/web/cordis.patch.yml`
    （源 `.tmpl`，改后 `chezmoi apply`），路径指向 `~/workspace/opensource/dsh-jev`。
 2. 先 `dsh --profile web --dump-config | head` 查无 `entry not found`。
-3. 重启 web 服务并刷新页面（client bundle 缓存），stdout `grep dsh-jev-` 看
+3. 重启 web 服务并刷新页面（client bundle 缓存），stderr `grep dsh-jev-` 看
    router/effort 日志。
 4. 回滚：删除插入的三段（或整段 `disabled: true`）即可，无其它持久化副作用。

@@ -120,6 +120,22 @@ describe('selectRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('apply', () => {
+  it('keeps default routing logs off stdout used by the TUI renderer', async () => {
+    const { fetchImpl } = mockJevFetch('light');
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const h = makeHarness();
+      apply(h.ctx, { fetchImpl });
+      await runRequest(h);
+      expect(stdout).not.toHaveBeenCalled();
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining('[dsh-jev-router]'));
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
   it('shadow mode (default): logs but never changes config', async () => {
     const { fetchImpl } = mockJevFetch('light');
     const lines: string[] = [];
