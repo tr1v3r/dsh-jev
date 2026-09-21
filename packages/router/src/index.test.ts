@@ -108,6 +108,13 @@ describe('selectRoute', () => {
     expect(r.reason).toContain('degraded');
   });
 
+  it('unexpected picked value keeps the default route instead of falling through to heavy', async () => {
+    const r = await selectRoute(okOutcome('turbo'), resolvedConfig as any, {}, llm);
+    expect(r.keepDefault).toBe(true);
+    expect(r.reason).toContain('unexpected pick');
+    expect(r.route).toEqual(resolvedConfig);
+  });
+
   it('missing target model keeps the default route', async () => {
     const missing = { listProviders: () => [], resolveModelInfo: async () => { throw new Error('missing'); } };
     const r = await selectRoute(okOutcome('light'), resolvedConfig as any, {}, missing);
